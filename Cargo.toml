@@ -1,10 +1,11 @@
 [package]
-name = "kevs-clap-dev-playground"
+name = "dsp_playground"
 version = "0.1.0"
 edition = "2021"
 authors = ["Kevin <hello@kevontheweb.net>"]
-license = "MIT"
-description = "An example plugin for test development"
+license = "closed source (source viewable)"
+homepage = "https://example.com"
+description = "An example plugin"
 
 [workspace]
 members = ["xtask"]
@@ -15,10 +16,10 @@ crate-type = ["cdylib"]
 [dependencies]
 # Remove the `assert_process_allocs` feature to allow allocations on the audio
 # thread in debug builds.
-# nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] }
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] }
 # Uncomment the below line to disable the on-by-default VST3 feature to remove
 # the GPL compatibility requirement
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["assert_process_allocs"] }
+# nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", default-features = false, features = ["assert_process_allocs"] }
 
 [profile.release]
 lto = "thin"

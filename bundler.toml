@@ -4,5 +4,5 @@
 # [package_name]
 # name = "Human Readable Plugin Name"  # defaults to <package_name>
 
-[nih_plugin]
-name = "Kev's Clap Dev Playground"
+[dsp_playground]
+name = "Clap DSP PLayground"
