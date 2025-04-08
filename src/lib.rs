@@ -1,5 +1,11 @@
-use nih_plug::prelude::*;
-use std::sync::Arc;
+pub mod dsp; // Declare the dsp module
+
+use dsp::filters::FIRLowPass;
+use nih_plug::{buffer, context, prelude::*};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex},
+};
 
 // This is a shortened version of the gain example with most comments removed, check out
 // https://github.com/robbert-vdh/nih-plug/blob/master/plugins/examples/gain/src/lib.rs to get
@@ -7,6 +13,7 @@ use std::sync::Arc;
 
 struct NihPlugin {
     params: Arc<NihPluginParams>,
+    lpf: dsp::filters::FIRLowPass,
 }
 
 #[derive(Params)]
@@ -17,12 +24,19 @@ struct NihPluginParams {
     /// gain parameter is stored as linear gain while the values are displayed in decibels.
     #[id = "gain"]
     pub gain: FloatParam,
+
+    #[id = "tone"]
+    pub tone: FloatParam,
+
+    #[id = "output"]
+    pub output: FloatParam,
 }
 
 impl Default for NihPlugin {
     fn default() -> Self {
         Self {
             params: Arc::new(NihPluginParams::default()),
+            lpf: FIRLowPass::new(48000.0, 1000.0, 20),
         }
     }
 }
@@ -30,27 +44,45 @@ impl Default for NihPlugin {
 impl Default for NihPluginParams {
     fn default() -> Self {
         Self {
-            // This gain is stored as linear gain. NIH-plug comes with useful conversion functions
-            // to treat these kinds of parameters as if we were dealing with decibels. Storing this
-            // as decibels is easier to work with, but requires a conversion for every sample.
             gain: FloatParam::new(
                 "Gain",
                 util::db_to_gain(0.0),
                 FloatRange::Skewed {
                     min: util::db_to_gain(-30.0),
                     max: util::db_to_gain(30.0),
-                    // This makes the range appear as if it was linear when displaying the values as
-                    // decibels
                     factor: FloatRange::gain_skew_factor(-30.0, 30.0),
                 },
             )
-            // Because the gain parameter is stored as linear gain instead of storing the value as
-            // decibels, we need logarithmic smoothing
             .with_smoother(SmoothingStyle::Logarithmic(50.0))
             .with_unit(" dB")
-            // There are many predefined formatters we can use here. If the gain was stored as
-            // decibels instead of as a linear gain value, we could have also used the
-            // `.with_step_size(0.1)` function to get internal rounding.
+            .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
+            .with_string_to_value(formatters::s2v_f32_gain_to_db()),
+
+            tone: FloatParam::new(
+                "Tone",
+                1000.0,
+                FloatRange::Skewed {
+                    min: 20.0,
+                    max: 20.0e3,
+                    factor: FloatRange::skew_factor(0.0),
+                },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" Hz")
+            .with_value_to_string(formatters::v2s_f32_hz_then_khz_with_note_name(4, false))
+            .with_string_to_value(formatters::s2v_f32_hz_then_khz()),
+
+            output: FloatParam::new(
+                "Output",
+                util::db_to_gain(0.0),
+                FloatRange::Skewed {
+                    min: util::db_to_gain(-30.0),
+                    max: util::db_to_gain(30.0),
+                    factor: FloatRange::gain_skew_factor(-30.0, 30.0),
+                },
+            )
+            .with_smoother(SmoothingStyle::Logarithmic(50.0))
+            .with_unit(" dB")
             .with_value_to_string(formatters::v2s_f32_gain_to_db(2))
             .with_string_to_value(formatters::s2v_f32_gain_to_db()),
         }
@@ -58,15 +90,13 @@ impl Default for NihPluginParams {
 }
 
 impl Plugin for NihPlugin {
-    const NAME: &'static str = "Nih Plugin";
-    const VENDOR: &'static str = "Lee Azzarello";
+    const NAME: &'static str = "Clap DSP Playground";
+    const VENDOR: &'static str = "Kevin Nel";
     const URL: &'static str = env!("CARGO_PKG_HOMEPAGE");
-    const EMAIL: &'static str = "lee@rockingtiger.com";
+    const EMAIL: &'static str = "hello@kevontheweb.net";
 
     const VERSION: &'static str = env!("CARGO_PKG_VERSION");
 
-    // The first audio IO layout is used as the default. The other layouts may be selected either
-    // explicitly or automatically by the host or the user depending on the plugin API/backend.
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
         main_input_channels: NonZeroU32::new(2),
         main_output_channels: NonZeroU32::new(2),
@@ -74,12 +104,8 @@ impl Plugin for NihPlugin {
         aux_input_ports: &[],
         aux_output_ports: &[],
 
-        // Individual ports and the layout as a whole can be named here. By default these names
-        // are generated as needed. This layout will be called 'Stereo', while a layout with
-        // only one input and output channel would be called 'Mono'.
         names: PortNames::const_default(),
     }];
-
 
     const MIDI_INPUT: MidiConfig = MidiConfig::None;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
@@ -102,13 +128,16 @@ impl Plugin for NihPlugin {
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
-        _buffer_config: &BufferConfig,
+        buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
         // Resize buffers and perform other potentially expensive initialization operations here.
         // The `reset()` function is always called right after this function. You can remove this
         // function if you do not need it.
-        true
+        let sample_rate = buffer_config.sample_rate;
+        let initial_cutoff = self.params.tone.default_plain_value();
+        self.lpf = FIRLowPass::new(sample_rate, initial_cutoff, 20);
+        true // Return true on success
     }
 
     fn reset(&mut self) {
@@ -122,12 +151,17 @@ impl Plugin for NihPlugin {
         _aux: &mut AuxiliaryBuffers,
         _context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        for channel_samples in buffer.iter_samples() {
-            // Smoothing is optionally built into the parameters themselves
-            let gain = self.params.gain.smoothed.next();
+        let gain = self.params.gain.smoothed.next();
+        let output_gain = self.params.output.smoothed.next();
+        let tone = self.params.tone.smoothed.next();
+        self.lpf.set_cutoff(tone); // Set the cutoff frequency once per buffer
 
+        for channel_samples in buffer.iter_samples() {
             for sample in channel_samples {
-                *sample *= gain;
+                // let pre_filtered = self.lpf.process(*sample);
+                let pre_filtered = *sample;
+                let clipped = dsp::drives::wave_shapers::green_clipper(pre_filtered * gain);
+                *sample = clipped * output_gain;
             }
         }
 
@@ -137,7 +171,8 @@ impl Plugin for NihPlugin {
 
 impl ClapPlugin for NihPlugin {
     const CLAP_ID: &'static str = "com.legalcontent.nih-plugin";
-    const CLAP_DESCRIPTION: Option<&'static str> = Some("An example plugin, passes analog in to analog out");
+    const CLAP_DESCRIPTION: Option<&'static str> =
+        Some("An example plugin, passes analog in to analog out");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
 
@@ -145,13 +180,13 @@ impl ClapPlugin for NihPlugin {
     const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::AudioEffect, ClapFeature::Stereo];
 }
 
-impl Vst3Plugin for NihPlugin {
-    const VST3_CLASS_ID: [u8; 16] = *b"dosp50tubjdkek30";
+// impl Vst3Plugin for NihPlugin {
+//     const VST3_CLASS_ID: [u8; 16] = *b"dosp50tubjdkek30";
 
-    // And also don't forget to change these categories
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
-        &[Vst3SubCategory::Fx, Vst3SubCategory::Dynamics];
-}
+//     // And also don't forget to change these categories
+//     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+//         &[Vst3SubCategory::Fx, Vst3SubCategory::Dynamics];
+// }
 
 nih_export_clap!(NihPlugin);
-nih_export_vst3!(NihPlugin);
+// nih_export_vst3!(NihPlugin);
