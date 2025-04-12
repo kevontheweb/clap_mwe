@@ -5,11 +5,14 @@ pub mod wave_shapers {
     // https://www.desmos.com/calculator/he9xxaqggh
     pub fn green_clipper(x: f32) -> f32 {
         if x >= 0.0 {
-            x.ln_1p() // ln(x + 1)
+            x.ln_1p() as f32 // ln(x + 1)
         } else {
             (2.65 * x).exp() - 1.0
         }
     }
+
+    // todo:
+    // https://www.desmos.com/calculator/xptpxqnz6x
 
     pub fn red_clipper(x: f64) -> f64 {
         let num = x / 2.0;
@@ -32,7 +35,7 @@ pub mod wave_shapers {
     }
 
     // hard clipper
-    pub fn g(x: f64, t: f64) -> f64 {
+    pub fn hard_clipper(x: f64, t: f64) -> f64 {
         x.min(t).max(-t)
     }
 
@@ -100,6 +103,7 @@ pub mod wave_shapers {
 pub mod tube {
     use std::f64;
 
+    /*
     pub fn Igk(V_gk: f64) -> f64 {
         let G_g = 3.263e-4;
         let C_g = 11.00;
@@ -114,6 +118,7 @@ pub mod tube {
         let mu = 86.9;
         G * ((((C / mu) * (V_gk * V_pk)).exp() + 1.0).log10() * (1.0 / C)).powf(y)
     }
+    */
 
     pub fn koren() -> f64 {
         todo!("implement");

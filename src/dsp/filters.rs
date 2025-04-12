@@ -119,3 +119,39 @@ impl FIRLowPass {
         coefficients
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct AllPassFilter {
+    pub delay_buffer: Vec<f32>,
+    pub delay_index: usize,
+    pub feedback: f32,
+}
+
+impl AllPassFilter {
+    pub fn new(delay_samples: usize) -> Self {
+        AllPassFilter {
+            delay_buffer: vec![0.0; delay_samples],
+            delay_index: 0,
+            feedback: 0.7,
+        }
+    }
+
+    pub fn set_feedback(&mut self, feedback: f32) {
+        self.feedback = feedback.clamp(-1.0, 1.0);
+    }
+
+    pub fn process(&mut self, input: f32) -> f32 {
+        let delayed_output = self.delay_buffer[self.delay_index];
+        let output = self.feedback * input + delayed_output;
+
+        self.delay_buffer[self.delay_index] = input - self.feedback * output;
+        self.delay_index = (self.delay_index + 1) % self.delay_buffer.len();
+
+        output
+    }
+
+    pub fn reset(&mut self) {
+        self.delay_buffer.fill(0.0);
+        self.delay_index = 0;
+    }
+}
